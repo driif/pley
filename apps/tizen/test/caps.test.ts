@@ -183,6 +183,24 @@ describe("Samsung's remote", () => {
   });
 });
 
+describe("Samsung server discovery", () => {
+  it("does not offer discovery or read the network address in a manual-address-only build", () => {
+    const getIp = vi.fn(() => "192.0.2.1");
+    vi.stubGlobal("webapis", { network: { getIp } });
+    const platform = tizenPlatform(true);
+    expect(platform.discover).toBeUndefined();
+    expect(platform.localAddress).toBeUndefined();
+    expect(getIp).not.toHaveBeenCalled();
+  });
+
+  it("still gives onboarding the network address in a regular build", async () => {
+    const getIp = vi.fn(() => "192.0.2.1");
+    vi.stubGlobal("webapis", { network: { getIp } });
+    expect(await tizenPlatform().localAddress?.()).toBe("192.0.2.1");
+    expect(getIp).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("Samsung's language", () => {
   it("reads Tizen's LOCALE as a language tag", () => {
     expect(localeTag("fr_FR")).toBe("fr-FR");

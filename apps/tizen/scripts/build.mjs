@@ -10,21 +10,28 @@ import { buildApp, versionOf } from "../../../packages/tv/build/build-app.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const version = versionOf(join(root, "package.json"));
-const dist = join(root, "dist");
+export async function buildTizen(dist = join(root, "dist")) {
+  const manualAddressOnly = process.env.PLEY_TIZEN_MANUAL_ADDRESS_ONLY === "1";
+  const { bytes } = await buildApp({
+    app: "Pley for Samsung TV",
+    entry: join(root, "src/main.ts"),
+    outdir: dist,
+    // Tizen 4.0 (2018) runs Chromium 56.
+    target: "chrome56",
+    version,
+    minify: process.argv.indexOf("--dev") < 0,
+    tsconfig: join(root, "tsconfig.json"),
+    // The TV's own Product API, at a path only the TV resolves.
+    head: '<script src="$WEBAPIS/webapis/webapis.js"></script>' +
+      (manualAddressOnly ? '\n  <meta name="pley-manual-address-only" content="true">' : ""),
+    files: [{ from: join(root, "assets/icon.png"), to: "icon.png" }],
+  });
+  const config = readFileSync(join(root, "config.xml"), "utf8").replace(/(<widget[^>]*\sversion=")[^"]*"/, `$1${version}"`);
+  writeFileSync(join(dist, "config.xml"), config);
+  return bytes;
+}
 
-const { bytes } = await buildApp({
-  app: "Pley for Samsung TV",
-  entry: join(root, "src/main.ts"),
-  outdir: dist,
-  // Tizen 4.0 (2018) runs Chromium 56.
-  target: "chrome56",
-  version,
-  minify: process.argv.indexOf("--dev") < 0,
-  tsconfig: join(root, "tsconfig.json"),
-  // The TV's own Product API, at a path only the TV resolves.
-  head: '<script src="$WEBAPIS/webapis/webapis.js"></script>',
-  files: [{ from: join(root, "assets/icon.png"), to: "icon.png" }],
-});
-const config = readFileSync(join(root, "config.xml"), "utf8").replace(/(<widget[^>]*\sversion=")[^"]*"/, `$1${version}"`);
-writeFileSync(join(dist, "config.xml"), config);
-console.log(`Pley for Samsung TV ${version}: dist/ (${(bytes / 1024).toFixed(0)} KB of script and styles)`);
+if (import.meta.main) {
+  const bytes = await buildTizen();
+  console.log(`Pley for Samsung TV ${version}: dist/ (${(bytes / 1024).toFixed(0)} KB of script and styles)`);
+}

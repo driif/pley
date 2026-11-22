@@ -41,7 +41,7 @@ let detach: (() => void) | null = null;
 
 const settle = () => act(() => new Promise<void>((resolve) => setTimeout(resolve, 20)));
 
-async function show() {
+async function show({ saved = false, localAddress }: { saved?: boolean; localAddress?: Platform["localAddress"] } = {}) {
   document.body.innerHTML = "";
   root = document.createElement("div");
   document.body.appendChild(root);
@@ -60,8 +60,13 @@ async function show() {
     nav: { restart: (to: unknown) => restarts.push(to) },
     reducedMotion: true,
   } as unknown as Ui;
-  const platform = { name: "tizen", clientId: "test", storage: memoryStore(), keepAwake: () => {} } as unknown as Platform;
-  const app = new AppState(platform, transport);
+  const platform = { name: "tizen", clientId: "test", storage: memoryStore(), keepAwake: () => {}, localAddress } as unknown as Platform;
+  const requests: string[] = [];
+  const app = new AppState(platform, (req) => {
+    requests.push(req.url);
+    return transport(req);
+  });
+  if (saved) app.rememberServer(SERVER, "Den");
   act(() =>
     render(
       <AppContext.Provider value={app}>
@@ -73,7 +78,7 @@ async function show() {
     ),
   );
   await settle();
-  return { page: root, ui, input, restarts };
+  return { page: root, ui, input, restarts, requests };
 }
 
 function press(input: Input, key: "ok" | "back") {
@@ -92,7 +97,9 @@ afterEach(() => {
 
 describe("entering a server's address", () => {
   it("opens the TV's keyboard on an empty field, and its OK connects", async () => {
-    const { page, ui, input, restarts } = await show();
+    const { page, ui, input, restarts, requests } = await show();
+    expect(requests).toEqual([]);
+    expect(page.querySelector('[aria-label="Search this network"]')?.hasAttribute("data-fdisabled")).toBe(true);
     expect(ui.focus.current?.textContent).toBe("Enter an address");
     press(input, "ok");
     const field = page.querySelector<HTMLInputElement>(".field input")!;
@@ -111,6 +118,18 @@ describe("entering a server's address", () => {
     await settle();
     expect(ui.input.typing).toBeNull();
     expect(restarts).toEqual([{ name: "link", server: SERVER }]);
+    expect(new Set(requests)).toEqual(new Set([`${SERVER}/api/server`]));
+  });
+
+  it("checks only a remembered address when discovery is unavailable", async () => {
+    const { page, requests, input, restarts, ui } = await show({ saved: true });
+    expect(page.querySelector('[aria-label="Search this network"]')?.hasAttribute("data-fdisabled")).toBe(true);
+    expect(ui.focus.current?.textContent).toContain("Den");
+    expect(requests).toEqual([`${SERVER}/api/server`]);
+    press(input, "ok");
+    await settle();
+    expect(restarts).toEqual([{ name: "link", server: SERVER }]);
+    expect(new Set(requests)).toEqual(new Set([`${SERVER}/api/server`]));
   });
 
   it("types the remote's digits once the keyboard is closed, and Back goes back to the list", async () => {
@@ -125,6 +144,14 @@ describe("entering a server's address", () => {
     press(input, "back");
     expect(page.querySelector(".field")).toBeNull();
     expect(page.textContent).toContain("Choose your server");
+  });
+});
+
+describe("starting with discovery available", () => {
+  it("checks the supplied subnet on an empty first launch without user input", async () => {
+    const { requests } = await show({ localAddress: async () => "192.0.2.15" });
+    expect(requests).toContain("http://192.0.2.1:7539/api/server");
+    expect(requests.every((url) => url.startsWith("http://192.0.2."))).toBe(true);
   });
 });
 

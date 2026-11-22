@@ -47,6 +47,12 @@ install it on a TV in developer mode.
 The native Samsung app installs the same way, as a `.tpk`
 ([Setting up](#setting-up)).
 
+For a Samsung web build that accepts only entered or saved server addresses,
+set `PLEY_TIZEN_MANUAL_ADDRESS_ONLY=1` when running `bun run tizen`. This
+keeps sign-in and playback available without a network sweep. The Search
+this network button is unavailable in this build. Without the option, first
+launch can search the local network as usual.
+
 ## Using it
 
 Sign-in, server discovery (a sweep of the TV's subnet), "Who's watching?"

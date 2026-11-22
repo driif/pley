@@ -10,6 +10,7 @@ describes how they are made.
 
 ### Added
 
+- A manual-address-only build option lets you connect without searching the local network.
 - A library's Collections are grouped by category, and can be narrowed
   to one category; a collection's page shows its category.
 - A row's See all opens the collection it shows, and a Home row of

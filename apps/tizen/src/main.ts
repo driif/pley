@@ -1,4 +1,5 @@
 import { startApp } from "pley-tv";
 import { tizenPlatform } from "./platform";
 
-startApp(tizenPlatform());
+const manualAddressOnly = document.querySelector('meta[name="pley-manual-address-only"]') !== null;
+startApp(tizenPlatform(manualAddressOnly));

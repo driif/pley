@@ -109,7 +109,7 @@ export function keyMap(supported: TizenKey[] | null): Record<number, Key> {
  * pley for Samsung TVs: AVPlay for video, Samsung's Product API for what
  * the TV is, the remote's keys by Tizen's names.
  */
-export function tizenPlatform(): Platform {
+export function tizenPlatform(manualAddressOnly = false): Platform {
   let facts: TizenFacts | null = null;
   const getFacts = () => (facts ??= readFacts());
   let keys: Record<number, Key> = DEFAULT_CODES;
@@ -158,13 +158,17 @@ export function tizenPlatform(): Platform {
       return { maker: "Samsung", model: f.model, os: `Tizen ${f.tizen.toFixed(1)}`, firmware: f.firmware, year: f.year, chromium: f.chromium };
     },
     tier: () => tierOf(getFacts()),
-    async localAddress(): Promise<string | null> {
-      try {
-        return webapis?.network?.getIp() ?? null;
-      } catch {
-        return null;
-      }
-    },
+    // Without an address or a discovery provider, onboarding has no subnet
+    // to sweep. The app can still check an entered or remembered server.
+    ...(manualAddressOnly ? {} : {
+      async localAddress(): Promise<string | null> {
+        try {
+          return webapis?.network?.getIp() ?? null;
+        } catch {
+          return null;
+        }
+      },
+    }),
     keepAwake(on) {
       try {
         const common = webapis!.appcommon!;
