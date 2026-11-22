@@ -42,6 +42,24 @@ docker compose up -d
 docker compose logs pley    # the setup link
 ```
 
+### Try Pley alongside Jellyfin
+
+Leave Jellyfin running and use the manual setup above. Before starting Pley,
+create a fresh data folder that Pley's user can write to (for example,
+`PLEY_CONFIG_DIR=./config-pley-test`), and set `PLEY_MEDIA_DIR` to an existing
+test media folder that Pley can read. Compose mounts the media read-only.
+Create accounts in Pley; accounts and watch state stay separate from
+Jellyfin and are not migrated.
+
+The Jellyfin-compatible API normally answers on Pley's port. If Jellyfin
+already uses port 8096, leave the standalone `compose.jellyfin.yaml` add-on
+out of `COMPOSE_FILE`. For a local trial, set `PLEY_LISTEN=127.0.0.1:7600`
+if port 7600 is unused, and connect to `http://127.0.0.1:7600` on the Docker
+host. Clients on other devices can't reach that loopback address; if you
+want to give them access, follow the [reverse proxy guidance](#behind-a-reverse-proxy).
+To end the trial, run `docker compose stop pley` from this folder. It stops
+only Pley and leaves Jellyfin running.
+
 ## Settings
 
 All in `.env`; [.env.example](.env.example) explains each one.
