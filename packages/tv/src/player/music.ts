@@ -115,6 +115,8 @@ export class MusicPlayer {
    * rest of the track (a start at a place too); the next track starts at 1.
    */
   private floor: AudioSeekStep = 1;
+  /** Kinds of file a plain move was tried in since the app started (`seekStep`). */
+  private readonly movedOnce = new Set<string>();
   private readonly seeks: AudioSeekMemory;
   private reportTimer: ReturnType<typeof setInterval> | null = null;
   private lastReportAt = 0;
@@ -129,7 +131,15 @@ export class MusicPlayer {
     document.body.appendChild(audio);
     this.audio = audio;
     audio.addEventListener("loadedmetadata", () => {
-      if (this.streamSet && this.pendingMs !== null) this.moveTo(this.pendingMs);
+      if (!this.streamSet || this.pendingMs === null) return;
+      // A seek held in a file until it knew its length goes through the steps, as any seek there.
+      if (this.session?.method === "direct" && !this.ladder && this.pendingMs >= RESTART_MS) {
+        const at = this.pendingMs;
+        this.pendingMs = null;
+        this.climb(at, this.seekStep(), !audio.paused);
+        return;
+      }
+      this.moveTo(this.pendingMs);
     });
     audio.addEventListener("playing", () => {
       if (this.streamSet) {
@@ -260,7 +270,8 @@ export class MusicPlayer {
       return true;
     }
     if (s && s.method === "direct") {
-      const step = this.firstStep();
+      // The track's start needs no retried move (it reloads the file once a later step is known).
+      const step = target < RESTART_MS ? this.firstStep() : this.seekStep();
       if (a.readyState < HAVE_METADATA && step === 1 && !this.ladder) {
         // Not movable yet: held, and applied once it knows its length.
         this.pendingMs = target;
@@ -364,6 +375,20 @@ export class MusicPlayer {
   }
 
   /**
+   * The step a seek in the file starts at: `firstStep`, except that the
+   * first seek in a kind of file since the app started tries a plain move,
+   * so a TV that seeks after all (a slow seek taught the steps, a firmware
+   * update) forgets them.
+   */
+  private seekStep(): AudioSeekStep {
+    const step = this.firstStep();
+    const kind = this.kind;
+    // Marked once a move was made and judged (`climb`): one asked and replaced first is tried again.
+    if (!kind || step <= this.floor || this.movedOnce.has(kind)) return step;
+    return this.floor;
+  }
+
+  /**
    * The mode a new session at `fromMs` asks for: a conversion when the
    * track's file is known not to reach places on this TV, else the server's pick.
    */
@@ -383,9 +408,11 @@ export class MusicPlayer {
    * plays only if the track played as the seek was made (`plays`).
    * `loaded`: the file was just started at the place (`#t=`), so step 2
    * checks that start rather than loading it again; its landing teaches
-   * nothing (a start isn't a seek), its failure does.
+   * nothing (a start isn't a seek), its failure does. `taught`: the steps
+   * before failed plainly (the element played on elsewhere), not by being
+   * slow to load; only then is a later step remembered.
    */
-  private climb(target: number, step: AudioSeekStep, plays: boolean, loaded = false): void {
+  private climb(target: number, step: AudioSeekStep, plays: boolean, loaded = false, taught = true): void {
     this.dropLadder();
     const s = this.session;
     const api = this.app.api.value;
@@ -398,8 +425,8 @@ export class MusicPlayer {
     }
     if (step === 3) {
       console.info("[music] seek ladder", { kind, step, landed: null });
-      // Learned now, by the steps before failing; a step remembered already isn't, so the memory still runs out.
-      if (kind && this.seeks.step(kind) < 3) this.seeks.landed(kind, 3);
+      // Learned now, by the steps before failing plainly; a step remembered already isn't, so the memory still runs out.
+      if (taught && kind && this.seeks.step(kind) < 3) this.seeks.landed(kind, 3);
       this.floor = 3;
       this.endSession();
       this.retries = 0;
@@ -422,17 +449,24 @@ export class MusicPlayer {
     const near = (at: number): boolean => at >= target - SEEK_NEAR_MS && at <= target + SEEK_NEAR_MS + (Date.now() - begun);
     // Near the place, or played on past it since; never while it still seeks (it then reads the place asked for).
     const landed = (): boolean => !a.seeking && near((a.currentTime || 0) * 1000);
+    // Step 2: the reload can play.
+    let armed = false;
     const finish = (ok: boolean): void => {
       if (this.ladder !== ladder) return;
+      // Still loading when its time ran out (a slow network): the next step is tried, but nothing is learned.
+      const slow = !ok && (a.seeking || (step === 2 && !armed));
       this.dropLadder();
-      console.info("[music] seek ladder", { kind, step, landed: ok });
+      if (kind && step === 1) this.movedOnce.add(kind);
+      console.info("[music] seek ladder", slow ? { kind, step, landed: ok, slow } : { kind, step, landed: ok });
       if (ok) {
         // A plain move forgets the kind; a later step is kept when it's later than what's remembered.
-        if (kind && !loaded && (step === 1 || step > this.seeks.step(kind))) this.seeks.landed(kind, step);
+        if (kind && !loaded && (step === 1 || (taught && step > this.seeks.step(kind)))) this.seeks.landed(kind, step);
         return;
       }
-      this.floor = Math.max(this.floor, step + 1) as AudioSeekStep;
-      this.climb(target, (step + 1) as AudioSeekStep, plays);
+      // A move tried again where a later step is remembered goes on at that step, not the ones known to fail.
+      const next = Math.max(step + 1, step === 1 && kind ? this.seeks.step(kind) : 1) as AudioSeekStep;
+      this.floor = Math.max(this.floor, next) as AudioSeekStep;
+      this.climb(target, next, plays, false, taught && !slow);
     };
     const on = (type: string, f: () => void): void => {
       a.addEventListener(type, f);
@@ -446,7 +480,6 @@ export class MusicPlayer {
     }
     // The reload is judged once it can play, and not by a first reading, which may be the place it was told:
     // by the time allowed, or sooner as it plays on from near the place.
-    let armed = false;
     let last: number | null = null;
     const ready = (): void => {
       if (armed || this.ladder !== ladder) return;
@@ -545,6 +578,8 @@ export class MusicPlayer {
       }
       this.session = info;
       this.kind = info.method === "direct" ? audioKind(info.url) : null;
+      // A file goes where a seek held meanwhile asked (a conversion was made from `fromMs`, and moves there as it loads).
+      if (info.method === "direct") fromMs = this.pendingMs ?? 0;
       // Every stream begins at the track's start (a conversion's playlist too, made from start_ms on):
       // the place is set as it knows its length, and again as it first plays if it went back.
       console.info("[music] start", { item: track.id, method: info.method, hls: info.hls, fromMs: Math.round(fromMs), mode: mode ?? "auto" });
@@ -552,7 +587,8 @@ export class MusicPlayer {
       const place = info.method === "direct" && fromMs >= RESTART_MS;
       if (place && Math.max(this.firstStep(), 2) === 3) {
         // This kind of file reaches no place on this TV: converted from there at once.
-        this.climb(fromMs, 3, true);
+        // Known by the memory or by this track's failures: nothing new to learn.
+        this.climb(fromMs, 3, true, false, false);
         return;
       }
       const at = info.method === "direct" && fromMs > 0 ? fragment(fromMs) : "";

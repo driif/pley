@@ -570,7 +570,10 @@ describe("a seek in a file the TV's <audio> won't move in: the seek ladder", () 
     const store = memoryStore();
     const { player, media, fire, requests, loads } = await world([1, 2, 3], 0, "direct", { ignoresSeeks: true, store });
     player.seekTo(100_000);
-    await vi.advanceTimersByTimeAsync(5_000);
+    await vi.advanceTimersByTimeAsync(1_500);
+    // The reload can play, and plays from elsewhere: a plain failure, which teaches.
+    fire("canplay");
+    await vi.advanceTimersByTimeAsync(3_500);
     expect(asked(requests)).toEqual([["transcode", 100_000]]);
     fire("playing");
     // The file can't be moved in on this TV: the rest of the track's seeks convert too, rather than load the file at a place it won't go.
@@ -587,11 +590,21 @@ describe("a seek in a file the TV's <audio> won't move in: the seek ladder", () 
     player.next();
     await settle();
     expect(requests.at(-1)!.mode).toBe("auto");
-    // Another player on this TV (the app opened again) remembers it too.
-    const again = await world([4], 0, "direct", { ignoresSeeks: true, store });
+    // Another player on this TV (the app opened again) remembers it too, once a plain move, tried first since it opened, fails.
+    expect(JSON.parse(store.get("pley.audioSeeks")!)["audio:flac"].step).toBe(3);
+    const again = await world([4, 5], 0, "direct", { ignoresSeeks: true, store });
     again.player.seekTo(50_000);
+    expect(again.sets).toEqual([50]);
+    await vi.advanceTimersByTimeAsync(1_500);
+    again.player.next();
     await settle();
-    expect(asked(again.requests)).toEqual([["transcode", 50_000]]);
+    again.player.seekTo(60_000);
+    await settle();
+    // The retried move failed and went on at the remembered conversion; the next track's seek goes there straight,
+    // with no move in the file (the conversion is moved to the place as it plays).
+    expect(asked(again.requests)).toEqual([["transcode", 50_000], ["auto", undefined], ["transcode", 60_000]]);
+    expect(again.loads.at(-2)).not.toMatch(/#t=/);
+    expect(again.loads.at(-1)).toMatch(/\.m3u8$/);
   });
 
   it("goes straight to the reload when it was the reload that landed, and doesn't remember other kinds", async () => {
@@ -607,14 +620,67 @@ describe("a seek in a file the TV's <audio> won't move in: the seek ladder", () 
     expect(first.requests).toHaveLength(1);
     expect(first.media.at).toBe(100);
     const w = await world([1, 2], 0, "direct", { ignoresSeeks: true, fragmentSeeks: true, store });
+    // The first seek since the app opened tries a plain move once (the TV may seek after all); later ones go straight to the reload.
     w.player.seekTo(60_000);
-    // No move tried first.
-    expect(w.sets).toEqual([]);
-    expect(w.loads.at(-1)).toMatch(/#t=60$/);
+    expect(w.sets).toEqual([60]);
+    await vi.advanceTimersByTimeAsync(1_500);
+    w.player.next();
+    await settle();
+    w.player.seekTo(90_000);
+    expect(w.sets).toEqual([60]);
+    expect(w.loads.at(-1)).toMatch(/#t=90$/);
     const mp3 = await world([1, 2], 0, "direct", { ext: "mp3", store });
     mp3.player.seekTo(60_000);
     expect(mp3.sets).toEqual([60]);
     expect(mp3.loads).toHaveLength(1);
+  });
+
+  it("goes straight on to a remembered conversion when the move tried again since the app opened fails", async () => {
+    vi.useFakeTimers();
+    const store = memoryStore();
+    store.set("pley.audioSeeks", JSON.stringify({ "audio:flac": { step: 3, at: Date.now() } }));
+    const { player, sets, loads, requests } = await world([1, 2], 0, "direct", { ignoresSeeks: true, store });
+    player.seekTo(100_000);
+    expect(sets).toEqual([100]);
+    await vi.advanceTimersByTimeAsync(1_500);
+    // No reload (step 2, known to fail here) before the conversion.
+    expect(loads.filter((u) => /#t=/.test(u))).toEqual([]);
+    expect(asked(requests)).toEqual([["transcode", 100_000]]);
+  });
+
+  it("restarts a track by loading the file again, not by a retried move, when a later step is remembered", async () => {
+    vi.useFakeTimers();
+    const store = memoryStore();
+    store.set("pley.audioSeeks", JSON.stringify({ "audio:flac": { step: 2, at: Date.now() } }));
+    const { player, sets, loads } = await world([1, 2], 0, "direct", { ignoresSeeks: true, store });
+    const before = loads.length;
+    player.seekTo(0);
+    expect(sets).toEqual([]);
+    expect(loads.length).toBe(before + 1);
+    // And the memory stays.
+    expect(JSON.parse(store.get("pley.audioSeeks")!)["audio:flac"].step).toBe(2);
+  });
+
+  it("learns nothing from a seek that was only slow: the element was still loading when its time ran out", async () => {
+    vi.useFakeTimers();
+    const store = memoryStore();
+    const { player, media, requests } = await world([1, 2], 0, "direct", { reportsPending: true, store });
+    player.seekTo(100_000);
+    // Still seeking at 1.5 s, and the reload never gets to play in 3 s: a slow network.
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(media.pending).not.toBeNull();
+    expect(asked(requests)).toEqual([["transcode", 100_000]]);
+    expect(store.get("pley.audioSeeks") ?? "{}").not.toContain("audio:flac");
+  });
+
+  it("goes where a seek asked while the track was starting said, not where the start was", async () => {
+    vi.useFakeTimers();
+    const { player, loads } = await world([1, 2], 0, "direct", { playsAtOnce: false });
+    player.next();
+    expect(player.seekTo(90_000)).toBe(true);
+    await settle();
+    expect(loads.at(-1)).toMatch(/#t=90$/);
+    expect(player.positionMs()).toBe(90_000);
   });
 
   it("tries a plain move again after 30 days, and forgets the kind once it lands", async () => {
@@ -799,9 +865,9 @@ describe("a seek ladder's places, checks and memory (review findings)", () => {
     expect(w.requests.filter((r) => r.mode === "transcode")).toEqual([]);
     expect(w.loads.at(-1)).toBe("http://nas:7539/api/media/pley_mk_1/file.flac");
     expect(w.media.at).toBe(0);
-    // And after a conversion took a seek, Previous plays the file from its start.
+    // And after a conversion took a seek (after the move tried once since the app opened), Previous plays the file from its start.
     w.player.seekTo(100_000);
-    await settle();
+    await vi.advanceTimersByTimeAsync(1_520);
     expect(asked(w.requests)).toEqual([["transcode", 100_000]]);
     w.fire("playing");
     w.media.at = 30;
