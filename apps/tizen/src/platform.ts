@@ -3,7 +3,9 @@ import { navigatorLanguages, t } from "pley-tv/i18n";
 import type { DeviceFacts, Platform, Probe } from "pley-tv/platform";
 import { standardKey, type Key } from "pley-tv/ui/keys";
 import { tierOf, tizenCaps } from "./caps";
+import { VideoEngine } from "pley-tv/player/video-engine";
 import { AvplayEngine } from "./engine";
+import { SelectingEngine } from "./engine-select";
 import { readFacts, type TizenFacts } from "./facts";
 
 /** pley for Samsung TV's built-in OAuth client (apps/server/src/oauth/builtin/tizen.json). */
@@ -106,7 +108,7 @@ export function keyMap(supported: TizenKey[] | null): Record<number, Key> {
 }
 
 /**
- * pley for Samsung TVs: AVPlay for video, Samsung's Product API for what
+ * pley for Samsung TVs: <video> and AVPlay for video, Samsung's Product API for what
  * the TV is, the remote's keys by Tizen's names.
  */
 export function tizenPlatform(manualAddressOnly = false): Platform {
@@ -148,7 +150,9 @@ export function tizenPlatform(manualAddressOnly = false): Platform {
         // Not on a TV.
       }
     },
-    createEngine: (host) => new AvplayEngine(host, getFacts().uhd),
+    // <video> for a file played as it is, AVPlay for the rest, or AVPlay for everything as the owner sets it.
+    createEngine: (host, options) =>
+      new SelectingEngine({ video: () => new VideoEngine(host), avplay: () => new AvplayEngine(host, getFacts().uhd) }, () => options?.player?.() ?? "auto"),
     async probe(overrides): Promise<Probe> {
       // Its lines are a getter, in the language shown when Diagnostics reads them.
       return tizenCaps(getFacts(), overrides);
