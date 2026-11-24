@@ -70,7 +70,7 @@
     "detailsHint": "Show how a video plays (direct, remux or transcode) over it",
     "player": "Player",
     "playerAuto": "Automatic",
-    "playerAutoHint": "The TV's web player for files played as they are, AVPlay for the rest",
+    "playerAutoHint": "AVPlay, or the TV's web player where AVPlay can't seek in a file",
     "playerAvplay": "AVPlay only",
     "playerAvplayHint": "Samsung's AVPlay for every video, as before"
   },

@@ -5,8 +5,9 @@ import type { Key } from "./ui/keys";
 
 /**
  * Settings › Playback › Player: `auto` lets the app pick the TV's player
- * for each source (Samsung's <video> for a file played as it is, AVPlay
- * for the rest); `avplay` plays everything on AVPlay.
+ * for each source (on Samsung, <video> for a file played as it is on sets
+ * before 2020 or where AVPlay won't seek in it, AVPlay for the rest);
+ * `avplay` plays everything on AVPlay.
  */
 export type PlayerChoice = "auto" | "avplay";
 

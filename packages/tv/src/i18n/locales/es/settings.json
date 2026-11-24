@@ -70,7 +70,7 @@
     "detailsHint": "Muestra sobre el video cómo se reproduce (directo, remux o transcodificación)",
     "player": "Reproductor",
     "playerAuto": "Automático",
-    "playerAutoHint": "El reproductor web del televisor para los archivos reproducidos tal cual, AVPlay para el resto",
+    "playerAutoHint": "AVPlay, o el reproductor web del televisor donde AVPlay no puede avanzar en un archivo",
     "playerAvplay": "Solo AVPlay",
     "playerAvplayHint": "AVPlay de Samsung para todos los videos, como antes"
   },

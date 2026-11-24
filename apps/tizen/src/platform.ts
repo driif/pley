@@ -150,9 +150,16 @@ export function tizenPlatform(): Platform {
         // Not on a TV.
       }
     },
-    // <video> for a file played as it is, AVPlay for the rest, or AVPlay for everything as Settings › Playback says.
-    createEngine: (host, options) =>
-      new SelectingEngine({ video: () => new VideoEngine(host), avplay: () => new AvplayEngine(host, getFacts().uhd) }, () => options?.player?.() ?? "auto"),
+    // <video> for a file played as it is on sets before 2020 (their AVPlay refuses seeks in such files), and on later
+    // sets at a seek AVPlay refused; AVPlay for the rest, or for everything as Settings › Playback says.
+    createEngine: (host, options) => {
+      const tizen5 = getFacts().year < 2020;
+      return new SelectingEngine(
+        { video: () => new VideoEngine(host), avplay: () => new AvplayEngine(host, getFacts().uhd, tizen5) },
+        () => options?.player?.() ?? "auto",
+        { videoFirst: tizen5, hlsFromFirstSegment: tizen5 },
+      );
+    },
     async probe(overrides): Promise<Probe> {
       // Its lines are a getter, in the language shown when Diagnostics reads them.
       return tizenCaps(getFacts(), overrides);

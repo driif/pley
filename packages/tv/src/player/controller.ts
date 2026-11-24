@@ -1108,7 +1108,13 @@ export class PlaybackController {
    */
   private seekOnElement(target: number, seek: boolean): boolean {
     const engine = this.engineRef;
-    if (!engine?.switchForSeek?.(target)) return false;
+    const seekedBefore = this.seekedAt;
+    // Before the switch, which says at once that the other player waits: that wait is the seek's, not a stall.
+    this.seekedAt = this.now();
+    if (!engine?.switchForSeek?.(target)) {
+      this.seekedAt = seekedBefore;
+      return false;
+    }
     console.info("[player] seek refused, the file on the TV's other player", target);
     this.elementTriedFor = target;
     const kind = seekKind(this.file);

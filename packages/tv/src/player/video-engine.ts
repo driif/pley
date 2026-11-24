@@ -18,6 +18,13 @@ export const SEEK_WATCHDOG_MS = 8_000;
  * keyframe, and a long-GOP HEVC file's are 10 s apart. As AVPlay's rule.
  */
 export const SEEK_LAND_NEAR_MS = 5_000;
+/**
+ * A seek shorter than this failed only when the element stayed where it
+ * was (within `SEEK_STAYED_MS`): the keyframe before the target can be as
+ * far behind it as a short skip is long. As AVPlay's rule.
+ */
+export const SEEK_JUDGED_MS = 30_000;
+export const SEEK_STAYED_MS = 1_000;
 
 /** A picture held across a switch (`holdPicture`) is kept at most this wide: the app's screen is 1920 pixels. */
 const HOLD_MAX_WIDTH = 1920;
@@ -185,7 +192,7 @@ export class VideoEngine implements PlayerEngine {
   /**
    * The element said a seek was made (or let it go): it failed when the
    * element's time is far from the target and no nearer it than where it
-   * came from.
+   * came from; a short seek (`SEEK_JUDGED_MS`), only when it stayed there.
    */
   private landed(): void {
     const l = this.landing;
@@ -193,7 +200,9 @@ export class VideoEngine implements PlayerEngine {
     this.clearLanding();
     const at = (this.video.currentTime || 0) * 1000;
     const fromTarget = Math.abs(at - l.target);
-    if (fromTarget <= SEEK_LAND_NEAR_MS || fromTarget < Math.abs(at - l.origin)) return;
+    const fromOrigin = Math.abs(at - l.origin);
+    const short = Math.abs(l.target - l.origin) < SEEK_JUDGED_MS;
+    if (fromTarget <= SEEK_LAND_NEAR_MS || (short ? fromOrigin > SEEK_STAYED_MS : fromTarget < fromOrigin)) return;
     console.info("[video] seek didn't land", l.target, at);
     this.listener?.seekFailed?.(l.target);
   }

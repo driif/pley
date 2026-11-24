@@ -99,6 +99,8 @@ function setup(preference: () => PlayerPreference = () => "auto") {
       },
     },
     preference,
+    // A set before 2020, the PR's own: files start on <video>, streams at their first segment.
+    { videoFirst: true, hlsFromFirstSegment: true },
   );
   const heard: string[] = [];
   engine.setListener({
@@ -271,12 +273,34 @@ describe("the TV's players behind one engine", () => {
     expect(engine.hlsFromFirstSegment).toBe(true);
   });
 
-  it("counts no frames on <video>: its counts aren't checked on these TVs, and dropped ones would have the Pi convert the file", () => {
+  it("counts no frames on <video>: dropped ones would have the session convert a file that plays as it is", () => {
     const { engine } = setup();
     engine.prepare(source(), true);
     expect(engine.frameCounts()).toBeNull();
     engine.prepare(source({ hls: true, mime: null }), true);
     expect(engine.frameCounts()).toEqual({ dropped: 30, total: 100 });
+  });
+
+  it("starts a file on AVPlay on 2020 and later sets, whose AVPlay seeks in it, and streams as they ask", () => {
+    const log: string[] = [];
+    const engine = new SelectingEngine({ video: () => new Fake("video", log), avplay: () => new Fake("avplay", log) }, () => "auto", {
+      videoFirst: false,
+      hlsFromFirstSegment: false,
+    });
+    engine.setListener({ status: () => undefined, firstFrame: () => undefined, error: () => undefined, tracks: () => undefined });
+    engine.prepare(source(), true);
+    expect(log).toEqual(["avplay created", "avplay prepare 600000 play"]);
+    expect(engine.hlsFromFirstSegment).toBe(false);
+    // A seek AVPlay refuses there still goes to <video>.
+    expect(engine.switchForSeek(1_200_000)).toBe(true);
+    expect(engine.activePlayer()).toBe("video");
+  });
+
+  it("leaves an audio track change on <video> to a new session: <video> can't be told which track", () => {
+    const { engine, video } = setup();
+    engine.prepare(source(), true);
+    video().selectAudio = () => true;
+    expect(engine.selectAudio(1, "fre")).toBe(false);
   });
 
   it("lets every player go when released", () => {

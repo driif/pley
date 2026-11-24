@@ -9,8 +9,9 @@ and packaging. It follows the [Android TV app](ANDROID.md): the same
 is a native app: [LG.md](LG.md).)
 
 - **Package:** a Tizen web app (`.wgt`).
-- **Player:** `<video>` for a file played as it is, AVPlay, Samsung's
-  player on the hardware video plane, for the rest.
+- **Player:** AVPlay, Samsung's player on the hardware video plane;
+  `<video>` for files played as they are on sets before 2020, and where
+  AVPlay won't seek in one.
 - **Oldest TV:** 2018 (Tizen 4.0, Chromium 56); Samsung's store takes new
   media apps for 2021 (Tizen 6.0) and later.
 
@@ -68,9 +69,8 @@ until it has, asks "Who's watching?". What differs:
   the native Samsung app show the controls on OK (Down: on Play/Pause),
   wait for OK before a seek, as YouTube's TV app does, and show the
   chapters as a row of cards over the scrubber.
-- Now Playing opens on its scrubber: Left and Right seek 10 s, OK plays or
-  pauses, Down goes to the controls. The media keys drive the music on Now
-  Playing only; in the native Samsung app they drive it from any page.
+- The media keys drive the music on Now Playing only; in the native
+  Samsung app they drive it from any page.
 - Samsung's `ChannelUp`, `ChannelDown`, `ChannelList` and `Guide` keys are
   registered.
 
@@ -569,8 +569,8 @@ them in a stream's MPEG-TS segments (2019 sets): the report's
 or MP3, stereo), and every stream is asked for with only those
 (`streamingCaps`, `packages/tv/src/player/plan.ts`), so the server
 converts the rest. A stream the server chose for a file the app expected to
-play as it is is asked for again that way. The native app doesn't do this
-yet: on a 2019 set its streams can still carry silent Dolby audio.
+play as it is is asked for again that way. (The native app needs Tizen 9,
+so it never plays on these sets.)
 
 AVPlay rules the engine keeps: one call at a time while a seek runs; no
 seek to 0; stop and close before the next source; the picture placed in
@@ -588,16 +588,21 @@ seek in is seeked as a remux, a new session at the place; once AVPlay
 refused seeks in a kind of file (container and video codec) on two items,
 seeks in that kind go straight to the remux for 30 days
 (`packages/tv/src/player/seekmemory.ts`). While AVPlay makes a seek in a
-stream, the server making the place isn't a stall, for up to 30 s.
-AVPlay prepares a stream from its first segment and doesn't answer a seek
-before it plays, so a stream started part-way plays first and seeks to the
-place once it does. The session therefore asks the server for such a
-stream from its start (`hlsFromFirstSegment`), unless picture subtitles
-are on, and the transcoder's first process makes the segment AVPlay asks
-for first. The seek then restarts it once at the place.
+stream, the server making the place isn't a stall, for up to 30 s. A seek
+shorter than 30 s failed only when AVPlay plays on from where it was:
+it lands on a keyframe, which in a long-GOP file can be as far behind the
+target as the skip is long. Tizen 5's AVPlay (sets before 2020) prepares a stream from
+its first segment and doesn't answer a seek before it plays, so there a
+stream started part-way plays first and seeks to the place once it does.
+The session therefore asks the server for such a stream from its start
+(`hlsFromFirstSegment`), unless picture subtitles are on, and the
+transcoder's first process makes the segment AVPlay asks for first. The
+seek then restarts it once at the place. Later sets seek to the place
+before they play, as the stream the server started there.
 
-The app has two players (`apps/tizen/src/engine-select.ts`). A file played
-as it is goes to `<video>` (`packages/tv/src/player/video-engine.ts`), whose
+The app has two players (`apps/tizen/src/engine-select.ts`). On sets
+before 2020, whose AVPlay refuses seeks in files played as they are, such
+a file goes to `<video>` (`packages/tv/src/player/video-engine.ts`), whose
 pipeline fetches it by HTTP range and seeks in it from there, as
 Jellyfin's player does on these TVs, when it is H.264 or HEVC up to 1080p
 in SDR, in MKV, MP4, TS or WebM, with the audio track the file starts with
@@ -607,16 +612,20 @@ audio track than the file's own. The two share the screen and the decoder,
 so one is let go entirely before the other starts. A file `<video>` can't
 open before its first picture goes on with AVPlay at the same place, and
 that kind of file stays on AVPlay while the player is open; the session's
-stall clock starts again with AVPlay. A seek AVPlay refuses in a file
-`<video>` takes (and in HEVC up to 4K in SDR, as Jellyfin plays it there)
-plays the same address on `<video>` at the place before a remux; one
-`<video>` can't open goes to the remux. What each player refuses is
-remembered apart. `<video>` takes a seek as made when it lands within 5 s
-of the place, or nearer it than where it was (a keyframe), and one still
-fetching over a slow network is left to the session's stall clock.
+stall clock starts again with AVPlay. Later sets play such files on
+AVPlay, as before. On any set, a seek AVPlay refuses in a file `<video>`
+takes (and in HEVC up to 4K in SDR, as Jellyfin plays it there) plays the
+same address on `<video>` at the place before a remux; one `<video>`
+can't open goes to the remux. What each player refuses is remembered
+apart. `<video>` takes a seek as made when it lands within 5 s of the
+place, or nearer it than where it was (a keyframe), or, for one shorter
+than 30 s, anywhere but where it was; one still fetching over a slow
+network is left to the session's stall clock.
 `<video>`'s frame counts aren't used: dropped frames would have the server
 convert a file played as it is. Settings → Playback → Player set to AVPlay
-only plays everything on AVPlay.
+only plays everything on AVPlay. An audio track picked while `<video>`
+plays starts a new session on AVPlay: `<video>` can't be told which track
+to play.
 
 Music plays a file as it is through `<audio>`, which on Tizen 5 doesn't
 move in a FLAC file: told a new `currentTime`, it pauses and plays on where
@@ -630,8 +639,12 @@ only, so the next track and the next seek ask for the file again. No step
 waits more than 3 s, and a newer seek replaces one under way. Which step
 worked is remembered for each kind of audio file (`flac`) for 30 days
 (`storedAudioSeekMemory`), so later seeks in that kind skip the steps that
-failed; a plain move that works forgets it. The console logs each step as
-`[music] seek ladder`.
+failed. A step that ran out of time while the file still loaded (a slow
+network) teaches nothing, and the first seek in a kind since the app
+started tries a plain move again: one that works forgets the kind. A seek
+asked while a track starts, or before the file knows its length, goes
+through the same steps. The console logs each step as `[music] seek
+ladder`.
 
 ## Releases
 

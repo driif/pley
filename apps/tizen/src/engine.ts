@@ -33,6 +33,14 @@ export const LAND_CHECK_MS = 3_000;
 export const LAND_NEAR_MS = 5_000;
 /** However long the stream waits, a seek is checked this long after AVPlay said it was made. */
 export const LAND_CAP_MS = 15_000;
+/**
+ * A seek shorter than this failed only when AVPlay plays on as if it had
+ * never been asked (within `STAYED_MS` of where it came from): it lands on
+ * a keyframe, which in a long-GOP file can be as far behind the target as
+ * a short skip is long, nearer where it came from than where it went.
+ */
+export const LAND_JUDGED_MS = 30_000;
+export const STAYED_MS = 1_000;
 /** AVPlay's time this near a seek's target is taken as its own, not a stale one. */
 const HOLD_NEAR_MS = 2_000;
 
@@ -57,8 +65,12 @@ function info(track: AvplayTrack): Record<string, string> {
  */
 export class AvplayEngine implements PlayerEngine {
   readonly name = "AVPlay";
-  /** Tizen's player prepares a stream from its first segment: a resume point is sought once it plays (`startAfterPlay`). */
-  readonly hlsFromFirstSegment = true;
+  /**
+   * Tizen 5's player (sets before 2020) prepares a stream from its first
+   * segment and answers no seek before it plays: a resume point is sought
+   * once it plays (`startAfterPlay`). Later sets seek before playing.
+   */
+  readonly hlsFromFirstSegment: boolean;
   private readonly player: Avplay;
   private readonly object: HTMLObjectElement;
   private listener: EngineListener | null = null;
@@ -103,9 +115,10 @@ export class AvplayEngine implements PlayerEngine {
   private landTimer: ReturnType<typeof setTimeout> | null = null;
   private capTimer: ReturnType<typeof setTimeout> | null = null;
 
-  constructor(host: HTMLElement, uhd: boolean) {
+  constructor(host: HTMLElement, uhd: boolean, hlsFromFirstSegment = false) {
     this.player = webapis!.avplay;
     this.uhd = uhd;
+    this.hlsFromFirstSegment = hlsFromFirstSegment;
     const object = document.createElement("object");
     object.setAttribute("type", "application/avplayer");
     object.className = "engine-avplay";
@@ -230,10 +243,11 @@ export class AvplayEngine implements PlayerEngine {
   /**
    * A seek AVPlay said it made: it failed if it plays on nearer where it
    * came from than where it went (each moved on by the time it played), and
-   * not near where it went. A keyframe a little before or after the target,
-   * or a stream that keeps waiting, is a seek made. A stream the server
-   * makes still waiting at `LAND_CAP_MS` is the server's to make, not a seek
-   * failed: AVPlay's time then is still the one from before it.
+   * not near where it went; a short one (`LAND_JUDGED_MS`) only if it plays
+   * on from where it was. A keyframe a little before or after the target,
+   * or a stream that keeps waiting, is a seek made. A stream the server makes still waiting at `LAND_CAP_MS` is
+   * the server's to make, not a seek failed: AVPlay's time then is still
+   * the one from before it.
    */
   private checkLanding(capped: boolean): void {
     const l = this.landing;
@@ -247,7 +261,9 @@ export class AvplayEngine implements PlayerEngine {
     const t = this.currentTime();
     if (t === null) return;
     const fromTarget = Math.abs(t - (l.target + played));
-    if (fromTarget <= LAND_NEAR_MS || fromTarget <= Math.abs(t - (l.origin + played))) {
+    const fromOrigin = Math.abs(t - (l.origin + played));
+    const short = Math.abs(l.target - l.origin) < LAND_JUDGED_MS;
+    if (fromTarget <= LAND_NEAR_MS || (short ? fromOrigin > STAYED_MS : fromTarget <= fromOrigin)) {
       // Landed: AVPlay's time is the position again, wherever near the target it went.
       this.hold = null;
       if (t > 0) this.lastTime = t;
@@ -360,7 +376,7 @@ export class AvplayEngine implements PlayerEngine {
           this.listener?.tracks();
         };
         // AVPlay can't seek to 0; the start of a file needs no seek.
-        if (this.startMs >= 1000 && source.hls) {
+        if (this.startMs >= 1000 && source.hls && this.hlsFromFirstSegment) {
           const target = Math.round(this.startMs);
           this.startAfterPlay = target;
           this.hold = { target, origin: 0, until: Date.now() + HLS_SEEK_WATCHDOG_MS };
@@ -428,7 +444,14 @@ export class AvplayEngine implements PlayerEngine {
     }
     // A seek asked before the stream plays is where it goes once it does.
     if (this.startAfterPlay !== null) {
-      this.startAfterPlay = Math.max(1000, Math.round(ms));
+      if (ms < 1000) {
+        // The start: the stream plays from there already.
+        this.startAfterPlay = null;
+        this.hold = null;
+        this.lastTime = Math.max(0, Math.round(ms));
+        return;
+      }
+      this.startAfterPlay = Math.round(ms);
       this.lastTime = this.startAfterPlay;
       if (this.hold) this.hold.target = this.startAfterPlay;
       return;

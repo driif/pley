@@ -70,7 +70,7 @@
     "detailsHint": "Afficher par-dessus la vidéo comment elle est lue (directe, remux ou transcodage)",
     "player": "Lecteur",
     "playerAuto": "Automatique",
-    "playerAutoHint": "Le lecteur web du téléviseur pour les fichiers lus tels quels, AVPlay pour le reste",
+    "playerAutoHint": "AVPlay, ou le lecteur web du téléviseur là où AVPlay ne peut pas se déplacer dans un fichier",
     "playerAvplay": "AVPlay uniquement",
     "playerAvplayHint": "AVPlay de Samsung pour toutes les vidéos, comme avant"
   },

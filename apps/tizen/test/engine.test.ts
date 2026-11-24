@@ -88,7 +88,8 @@ beforeEach(() => {
   vi.stubGlobal("webapis", { avplay: fake.avplay });
   heard = [];
   failed = [];
-  engine = new AvplayEngine(document.createElement("div"), false);
+  // A set before 2020 (Tizen 5), whose AVPlay starts streams at their first segment.
+  engine = new AvplayEngine(document.createElement("div"), false, true);
   const listener: EngineListener = {
     status: (s) => heard.push(s),
     firstFrame: () => heard.push("firstFrame"),
@@ -310,6 +311,28 @@ describe("AVPlay's seeks, one after another and after they land", () => {
     expect(failed).toEqual([]);
   });
 
+  it("takes a short skip landing on the keyframe before where it came from as made (a long-GOP file)", () => {
+    playing();
+    fake.player.time = 1_200_000;
+    engine.seekTo(1_210_000);
+    fake.endSeek();
+    // On the keyframe 2 s before where it came from, played 3 s by the check.
+    fake.player.time = 1_201_000;
+    vi.advanceTimersByTime(20_000);
+    expect(failed).toEqual([]);
+  });
+
+  it("tells the session of a short skip AVPlay says it made but that played on from where it was", () => {
+    playing();
+    fake.player.time = 1_200_000;
+    engine.seekTo(1_210_000);
+    fake.endSeek();
+    // Where it came from, played 3 s by the check.
+    fake.player.time = 1_203_000;
+    vi.advanceTimersByTime(20_000);
+    expect(failed).toEqual([1_210_000]);
+  });
+
   it("takes a landing a little past the target, played a while, as landed", () => {
     playing();
     fake.player.time = 60_000;
@@ -394,6 +417,28 @@ describe("AVPlay's seeks in a stream the server makes", () => {
 
   it("says so to the session, which then has the server start a stream at its first segment too", () => {
     expect(engine.hlsFromFirstSegment).toBe(true);
+  });
+
+  it("seeks a stream to its resume point before it plays on 2020 and later sets", () => {
+    engine.release();
+    engine = new AvplayEngine(document.createElement("div"), false, false);
+    engine.setListener({ status: () => undefined, firstFrame: () => undefined, error: () => undefined, tracks: () => undefined, seekFailed: (ms) => failed.push(ms) });
+    expect(engine.hlsFromFirstSegment).toBe(false);
+    engine.prepare(hls(600_000), true);
+    fake.player.prepared!();
+    expect(fake.calls).toEqual(["open", "seekTo 600000"]);
+    fake.endSeek();
+    expect(fake.calls).toEqual(["open", "seekTo 600000", "play"]);
+  });
+
+  it("drops the resume point for a seek to the start asked before the stream plays", () => {
+    engine.prepare(hls(600_000), true);
+    fake.player.prepared!();
+    engine.seekTo(0);
+    fake.player.time = 40;
+    fake.player.listener!.oncurrentplaytime!(40);
+    expect(fake.calls.filter((c) => c.startsWith("seekTo"))).toEqual([]);
+    expect(engine.positionMs()).toBe(40);
   });
 
   it("seeks a stream opened paused to its resume point once it plays", () => {
