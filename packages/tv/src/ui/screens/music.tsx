@@ -402,7 +402,7 @@ export function NowPlayingScreen() {
           <div class="now-round">
             <Round label={t("browse.music.previous")} icon="skip-back" onSelect={() => player.previous()} />
           </div>
-          <F class="play-big" elRef={(el) => (playBig.current = el)} label={now.playing || (now.loading && !now.error) ? t("browse.music.pause") : t("common.actions.play")} onSelect={() => player.toggle()}>
+          <F class="play-big" initial elRef={(el) => (playBig.current = el)} label={now.playing || (now.loading && !now.error) ? t("browse.music.pause") : t("common.actions.play")} onSelect={() => player.toggle()}>
             <Icon name={now.playing || (now.loading && !now.error) ? "pause" : "play"} size={32} />
           </F>
           <div class="now-round">
@@ -574,7 +574,7 @@ function forward(positionMs: number, durationMs: number): number {
 }
 
 /**
- * The track's scrubber, focused as the page opens: Left and Right move
+ * The track's scrubber, above Play: Left and Right move
  * 10 s (a seek that settles, `useSettledSeek`), OK plays or pauses, Down
  * goes to the controls.
  */
@@ -587,7 +587,6 @@ function Scrubber(p: { positionMs: number; durationMs: number; bufferedMs: numbe
     <div class="now-scrubber">
       <F
         class="scrub-box"
-        initial
         label={t("browse.music.position")}
         onSelect={p.onToggle}
         onKey={(key) => {

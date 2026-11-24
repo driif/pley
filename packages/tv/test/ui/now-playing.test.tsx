@@ -76,7 +76,12 @@ function setup() {
     });
   const focused = () => focus.current;
   const labelled = (label: string) => root!.querySelector<HTMLElement>(`[aria-label="${label}"]`);
-  return { key, focused, labelled };
+  /** Up from Play to the scrubber. */
+  const toScrubber = () => {
+    key("up");
+    expect(focused()?.classList.contains("scrub-box")).toBe(true);
+  };
+  return { key, focused, labelled, toScrubber };
 }
 
 beforeEach(() => {
@@ -96,13 +101,14 @@ afterEach(() => {
 });
 
 describe("Now Playing's keys", () => {
-  it("opens with the scrubber focused", () => {
+  it("opens with Play focused, as on Android TV and the native Samsung app", () => {
     const { focused } = setup();
-    expect(focused()?.classList.contains("scrub-box")).toBe(true);
+    expect(focused()?.classList.contains("play-big")).toBe(true);
   });
 
   it("seeks 10 s with Right and Left on the scrubber", () => {
-    const { key, focused } = setup();
+    const { key, focused, toScrubber } = setup();
+    toScrubber();
     key("right");
     act(() => void vi.advanceTimersByTime(300));
     expect(fake.seekTo).toHaveBeenLastCalledWith(70_000);
@@ -114,14 +120,16 @@ describe("Now Playing's keys", () => {
 
   it("seeks forward while the track's length isn't known yet, rather than to its start", () => {
     fake.duration = 0;
-    const { key } = setup();
+    const { key, toScrubber } = setup();
+    toScrubber();
     key("right");
     act(() => void vi.advanceTimersByTime(300));
     expect(fake.seekTo).toHaveBeenLastCalledWith(70_000);
   });
 
   it("moves the place shown at once for each of quick Right presses, and seeks once, to the last, as they stop", () => {
-    const { key, labelled } = setup();
+    const { key, labelled, toScrubber } = setup();
+    toScrubber();
     const times = () => labelled(t("browse.music.position"))!.parentElement!.querySelector(".scrub-times")!.textContent;
     for (let i = 0; i < 5; i++) {
       key("right");
@@ -150,7 +158,8 @@ describe("Now Playing's keys", () => {
   });
 
   it("drops a seek still to go when another track starts meanwhile: the place was the last track's", () => {
-    const { key } = setup();
+    const { key, toScrubber } = setup();
+    toScrubber();
     key("right");
     act(() => {
       fake.now.value = { track: track(3), index: 2, count: 3, playing: true, loading: false, ended: false, shuffle: false, error: null };
@@ -161,7 +170,8 @@ describe("Now Playing's keys", () => {
   });
 
   it("goes down to Play, and along the controls from there with Left and Right", () => {
-    const { key, focused, labelled } = setup();
+    const { key, focused, labelled, toScrubber } = setup();
+    toScrubber();
     key("down");
     expect(focused()?.classList.contains("play-big")).toBe(true);
     key("left");
