@@ -2418,6 +2418,24 @@ describe("files this TV's player can't seek in, as it plays them", () => {
     }
     expect(w.env.seekMemory.known("mkv/hevc")).toBe(false);
   });
+
+  it("doesn't count a seek the TV's player gave up on while it still loaded (a slow network), and still remuxes there", async () => {
+    const w = world(item(file()), remuxed);
+    w.env.seekMemory = storedSeekMemory(memory(), "seeks");
+    const c = new PlaybackController({ itemId: 70 }, w.env, 0);
+    c.start();
+    await settle();
+    shown(w);
+    c.seekTo(1_200_000);
+    w.engine.listener?.seekFailed?.(1_200_000, true);
+    await settle();
+    expect(w.requests.at(-1)).toMatchObject({ start_ms: 1_200_000, mode: "remux" });
+    c.close();
+    await settle();
+    // One more item's refusal would make two, were the slow one counted.
+    w.env.seekMemory.refused("mkv/hevc", 99);
+    expect(w.env.seekMemory.known("mkv/hevc")).toBe(false);
+  });
 });
 
 describe("a seek the TV's player is still making in a stream", () => {
@@ -2628,6 +2646,21 @@ describe("a file played as it is, on a TV with two players (Samsung's AVPlay and
       expect(w.env.seekMemory!.seeksViaElement("mkv/hevc")).toBe(true);
       expect(w.requests.length).toBe(1);
       c.close();
+    });
+
+    it("doesn't take <video> failing to open the file after a newer seek for its refusal, and remuxes at the newer place", async () => {
+      const { w, c } = await switched();
+      c.seekTo(2_400_000);
+      w.engine.listener?.seekFailed?.(2_400_000);
+      await vi.advanceTimersByTimeAsync(50);
+      expect(w.engine.switchedAt).toEqual([1_200_000]);
+      expect(w.requests.map((r) => [r.start_ms, r.mode])).toEqual([
+        [600_000, "auto"],
+        [2_400_000, "remux"],
+      ]);
+      c.close();
+      w.env.seekMemory!.refused("mkv/hevc@video", 99);
+      expect(w.env.seekMemory!.known("mkv/hevc@video")).toBe(false);
     });
   });
 

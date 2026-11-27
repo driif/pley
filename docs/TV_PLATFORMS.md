@@ -528,7 +528,7 @@ and field reports:
 
 | Year | Tizen | Chromium | Beyond H.264 and HEVC Main 10 | Notes |
 |---|---|---|---|---|
-| 2018 | 4.0 | 56 | VP9 Profile 0 and 2 | |
+| 2018 | 4.0 | 56 | VP9 Profile 0 and 2 | Dolby audio from files only: silent in MPEG-TS segments |
 | 2019 | 5.0 | 63 | VP9; 8K HEVC on 8K sets | Dolby audio from files only: silent in MPEG-TS segments |
 | 2020 | 5.5 | 69 | AV1 | fMP4 in HLS |
 | 2021 | 6.0 | 76 | AV1 | Codec queries, HTTP status in player errors; the store's floor |
@@ -564,7 +564,7 @@ version), the panel (4K, 8K, HDR), codec queries on Tizen 6.0 and later,
 and the sound output. AC-3 and E-AC-3 are passed through when the TV's
 output is set to Dolby; TrueHD and DTS only when Settings → Playback asks.
 Before 2020, AVPlay plays AC-3 and E-AC-3 from a file but is silent on
-them in a stream's MPEG-TS segments (2019 sets): the report's
+them in a stream's MPEG-TS segments (2018 and 2019 sets): the report's
 `hls.audio` and `hls.audio_channels` say what a stream's audio can be (AAC
 or MP3, stereo), and every stream is asked for with only those
 (`streamingCaps`, `packages/tv/src/player/plan.ts`), so the server

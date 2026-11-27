@@ -84,8 +84,10 @@ export interface EngineListener {
    * A seek to `targetMs` (or the start at `source.startMs`) didn't get
    * there: the player refused it, or said it was made and plays on from
    * elsewhere. It plays on where it is; the session decides what next.
+   * `slow`: it was still loading when the player gave up on it, which a
+   * slow network does too: not a refusal to remember for the kind of file.
    */
-  seekFailed?(targetMs: number): void;
+  seekFailed?(targetMs: number, slow?: boolean): void;
   /**
    * The engine started the source again on another of the TV's players,
    * before a first picture (Samsung's <video> couldn't open the file, so

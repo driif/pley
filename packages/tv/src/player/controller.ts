@@ -500,7 +500,7 @@ export class PlaybackController {
           firstFrame: () => this.onFirstFrame(),
           error: (e) => this.onError(e),
           tracks: () => undefined,
-          seekFailed: (target) => this.onSeekFailed(target),
+          seekFailed: (target, slow) => this.onSeekFailed(target, slow === true),
           restarted: () => this.onEngineRestarted(),
         });
       }
@@ -1050,7 +1050,7 @@ export class PlaybackController {
    * it plays on where it is. Not an error: the recovery ladder would end on
    * the error screen for what still plays.
    */
-  private onSeekFailed(target: number): void {
+  private onSeekFailed(target: number, slow = false): void {
     const engine = this.engineRef;
     if (!engine || !this.info || this.closed || this.stopped || this.ended || this.outage || this.sessionEnded) return;
     if (this.state.value.phase.kind === "error") return;
@@ -1087,11 +1087,13 @@ export class PlaybackController {
     // place, and seeks after that are in its playlist. It stays a remux for
     // this item.
     if (this.info.method === "direct" && !this.info.hls) {
-      // The other player failing where AVPlay refused (it couldn't open the file there) isn't its refusal.
-      const onElement = near(this.elementTriedFor);
-      // A seek, not the start: remembered for this kind of file.
+      // The other player failing where AVPlay refused (it couldn't open the file there) isn't its refusal,
+      // nor is its failing before its first picture after a newer seek moved where it was asked to be.
+      const opening = this.elementTriedFor !== null && !this.mediaShown && engine.activePlayer?.() === "video";
+      const onElement = near(this.elementTriedFor) || opening;
+      // A seek, not the start, refused rather than still loading: remembered for this kind of file.
       const kind = this.refusalKind();
-      if (asked && kind && this.item && !onElement) this.env.seekMemory?.refused(kind, this.item.id);
+      if (asked && kind && this.item && !onElement && !slow) this.env.seekMemory?.refused(kind, this.item.id);
       // The TV's other player may seek in it (by HTTP range), from the same address: tried once before the remux.
       if (!onElement && this.seekOnElement(target, asked !== null)) return;
     }

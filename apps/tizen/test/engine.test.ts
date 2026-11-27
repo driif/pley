@@ -79,6 +79,8 @@ function source(startMs: number): EngineSource {
 let fake: ReturnType<typeof fakeAvplay>;
 let heard: string[];
 let failed: number[];
+/** The seeks the session heard of as slow (still loading), not refused. */
+let slow: number[];
 let engine: AvplayEngine;
 
 beforeEach(() => {
@@ -88,6 +90,7 @@ beforeEach(() => {
   vi.stubGlobal("webapis", { avplay: fake.avplay });
   heard = [];
   failed = [];
+  slow = [];
   // A set before 2020 (Tizen 5), whose AVPlay starts streams at their first segment.
   engine = new AvplayEngine(document.createElement("div"), false, true);
   const listener: EngineListener = {
@@ -95,7 +98,10 @@ beforeEach(() => {
     firstFrame: () => heard.push("firstFrame"),
     error: (e) => heard.push(`error ${e.kind}`),
     tracks: () => undefined,
-    seekFailed: (ms) => failed.push(ms),
+    seekFailed: (ms, s) => {
+      failed.push(ms);
+      if (s) slow.push(ms);
+    },
   };
   engine.setListener(listener);
 });
@@ -158,6 +164,63 @@ describe("AVPlay's seeks", () => {
     fake.player.listener!.onbufferingstart!();
     vi.advanceTimersByTime(16_000);
     expect(failed).toEqual([1_200_000]);
+    // Still loading: a slow network, not a refusal to remember for the kind of file.
+    expect(slow).toEqual([1_200_000]);
+  });
+
+  it("tells the session of a seek that played on from where it was as refused, not slow", () => {
+    playing();
+    fake.player.time = 60_000;
+    engine.seekTo(1_200_000);
+    fake.endSeek();
+    fake.player.time = 63_000;
+    vi.advanceTimersByTime(3_500);
+    expect(failed).toEqual([1_200_000]);
+    expect(slow).toEqual([]);
+  });
+
+  it("doesn't judge a seek made while paused until it plays: paused, AVPlay's time doesn't move", () => {
+    playing();
+    fake.player.time = 1_200_000;
+    engine.pause();
+    engine.seekTo(1_210_000);
+    fake.endSeek();
+    // AVPlay ignored it, and stays where it was while paused.
+    vi.advanceTimersByTime(60_000);
+    expect(failed).toEqual([]);
+    engine.play();
+    fake.player.time = 1_203_000;
+    vi.advanceTimersByTime(3_500);
+    expect(failed).toEqual([1_210_000]);
+  });
+
+  it("takes a seek made while paused as landed once it plays on from there", () => {
+    playing();
+    fake.player.time = 1_200_000;
+    engine.pause();
+    engine.seekTo(1_210_000);
+    fake.player.time = 1_210_000;
+    fake.endSeek();
+    vi.advanceTimersByTime(60_000);
+    engine.play();
+    fake.player.time = 1_213_000;
+    vi.advanceTimersByTime(20_000);
+    expect(failed).toEqual([]);
+  });
+
+  it("counts only the time it played toward a seek's check, not a pause in between", () => {
+    playing();
+    fake.player.time = 1_200_000;
+    engine.seekTo(1_210_000);
+    fake.endSeek();
+    vi.advanceTimersByTime(1_000);
+    engine.pause();
+    vi.advanceTimersByTime(30_000);
+    engine.play();
+    // AVPlay ignored it: 1 s played before the pause, 3 s after, from where it was.
+    fake.player.time = 1_204_000;
+    vi.advanceTimersByTime(3_000);
+    expect(failed).toEqual([1_210_000]);
   });
 
   it("survives a seek that throws: the session hears of it, and later calls still reach AVPlay", () => {

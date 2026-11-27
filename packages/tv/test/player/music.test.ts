@@ -328,7 +328,7 @@ describe("music's seeking and starting where it was", () => {
     expect(requests.at(-1)!.mode).toBe("auto");
   });
 
-  it("plays a file the TV can't decode once more as a conversion where it was to start, and tries a failing conversion again as the server picks", async () => {
+  it("plays a file the TV can't decode once more as a conversion where it was to start, and tries that conversion again as one when it fails", async () => {
     vi.useFakeTimers();
     const { fire, requests } = await world([1, 2], 0, "direct", { playsAtOnce: false, fromMs: 30_000 });
     fire("error");
@@ -337,7 +337,8 @@ describe("music's seeking and starting where it was", () => {
     fire("error");
     await settle();
     await vi.advanceTimersByTimeAsync(1_100);
-    expect(requests.slice(2).map((r) => [r.mode, r.start_ms])).toEqual([["auto", 30_000]]);
+    // The file failed already: the server would pick it again.
+    expect(requests.slice(2).map((r) => [r.mode, r.start_ms])).toEqual([["transcode", 30_000]]);
   });
 
   it("counts a track's failures afresh once it played on well past where it failed, so trouble long after the last doesn't end it", async () => {
@@ -912,5 +913,29 @@ describe("a seek ladder's places, checks and memory (review findings)", () => {
     player.toggle();
     await settle();
     expect(asked(requests, 2)).toEqual([["transcode", 100_000]]);
+  });
+
+  it("judges a reload made while paused once it plays, not by the place the paused element reports", async () => {
+    vi.useFakeTimers();
+    const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const store = memoryStore();
+    const { player, media, fire, requests, loads } = await world([1, 2], 0, "direct", { ignoresSeeks: true, store });
+    player.pause();
+    player.seekTo(90_000);
+    await vi.advanceTimersByTimeAsync(1_500);
+    expect(loads).toHaveLength(2);
+    // Paused, the element reads the place it was told.
+    media.at = 90;
+    fire("canplay");
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(ladderLog(info)).toEqual([{ kind: "flac", step: 1, landed: false }]);
+    expect(store.get("pley.audioSeeks")).toBeNull();
+    // It plays from the file's start.
+    media.at = 0;
+    player.toggle();
+    await vi.advanceTimersByTimeAsync(2_500);
+    await settle();
+    expect(ladderLog(info).slice(1, 2)).toEqual([{ kind: "flac", step: 2, landed: false }]);
+    expect(asked(requests)).toEqual([["transcode", 90_000]]);
   });
 });

@@ -167,7 +167,7 @@ export class SelectingEngine implements PlayerEngine {
       },
       error: (e) => mine() && this.onError(name, e),
       tracks: () => mine() && this.listener?.tracks(),
-      seekFailed: (t) => mine() && this.listener?.seekFailed?.(t),
+      seekFailed: (t, slow) => mine() && this.listener?.seekFailed?.(t, slow),
     });
     if (this.areaSet) engine.setArea?.(this.area);
     return engine;

@@ -397,6 +397,16 @@ export class MusicPlayer {
   }
 
   /**
+   * A new session at `fromMs` for one that failed by no fault of the
+   * file's (a network blip, its address gone): a conversion because the
+   * file failed stays one, as the file would fail again.
+   */
+  private retry(fromMs: number): void {
+    const converted = this.converted;
+    void this.start(fromMs, converted ? "transcode" : this.placeMode(fromMs), converted);
+  }
+
+  /**
    * A seek in the file, at step `step`: 1 moves the element and waits for
    * it to land (it says `seeked`, or 1.5 s at most); 2 loads the file again
    * from the place (`#t=`, and the place set as it knows its length) and
@@ -405,7 +415,8 @@ export class MusicPlayer {
    * (the next track asks the server afresh). A step that fails goes on to
    * the next; a later step that worked is remembered for the kind, and a
    * plain move that works forgets it. No step waits more than 3 s. A reload
-   * plays only if the track played as the seek was made (`plays`).
+   * plays only if the track played as the seek was made (`plays`); one
+   * made paused is judged once it plays, not by the place it was told.
    * `loaded`: the file was just started at the place (`#t=`), so step 2
    * checks that start rather than loading it again; its landing teaches
    * nothing (a start isn't a seek), its failure does. `taught`: the steps
@@ -434,7 +445,7 @@ export class MusicPlayer {
       return;
     }
     const a = this.audio;
-    const begun = Date.now();
+    let begun = Date.now();
     const timers: ReturnType<typeof setTimeout>[] = [];
     const events: [string, () => void][] = [];
     const ladder: Ladder = {
@@ -472,7 +483,9 @@ export class MusicPlayer {
       a.addEventListener(type, f);
       events.push([type, f]);
     };
-    timers.push(setTimeout(() => finish(landed()), step === 1 ? MOVE_CHECK_MS : STEP_MAX_MS));
+    // A reload while paused plays nothing yet: its time is the place it was told until it plays.
+    const onPlay = step === 2 && !plays;
+    if (!onPlay) timers.push(setTimeout(() => finish(landed()), step === 1 ? MOVE_CHECK_MS : STEP_MAX_MS));
     if (step === 1) {
       on("seeked", () => landed() && finish(true));
       this.moveTo(target);
@@ -482,9 +495,11 @@ export class MusicPlayer {
     // by the time allowed, or sooner as it plays on from near the place.
     let last: number | null = null;
     const ready = (): void => {
-      if (armed || this.ladder !== ladder) return;
+      if (armed || this.ladder !== ladder || (onPlay && a.paused)) return;
       armed = true;
-      timers.push(setTimeout(() => finish(landed()), Math.min(RELOAD_CHECK_MS, Math.max(0, STEP_MAX_MS - (Date.now() - begun)))));
+      if (onPlay) begun = Date.now();
+      const wait = onPlay ? RELOAD_CHECK_MS : Math.min(RELOAD_CHECK_MS, Math.max(0, STEP_MAX_MS - (Date.now() - begun)));
+      timers.push(setTimeout(() => finish(landed()), wait));
     };
     on("loadedmetadata", () => this.moveTo(target));
     on("canplay", ready);
@@ -626,8 +641,7 @@ export class MusicPlayer {
         if (e instanceof SessionStoppedError) this.stoppedByServer(session.session_id);
         else if (isApiError(e, 404)) {
           this.session = null;
-          const at = this.here();
-          void this.start(at, this.placeMode(at));
+          this.retry(this.here());
         } else if (unreachable(e)) this.update({ playing: false, loading: false, error: "offline" });
         else this.trackFailed(session);
       },
@@ -666,8 +680,7 @@ export class MusicPlayer {
     this.pendingMs = at;
     setTimeout(() => {
       if (mine !== this.generation) return;
-      const from = this.here();
-      void this.start(from, this.placeMode(from));
+      this.retry(this.here());
     }, 1000);
   }
 

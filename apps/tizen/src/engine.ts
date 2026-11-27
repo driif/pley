@@ -66,9 +66,10 @@ function info(track: AvplayTrack): Record<string, string> {
 export class AvplayEngine implements PlayerEngine {
   readonly name = "AVPlay";
   /**
-   * Tizen 5's player (sets before 2020) prepares a stream from its first
-   * segment and answers no seek before it plays: a resume point is sought
-   * once it plays (`startAfterPlay`). Later sets seek before playing.
+   * The player of sets before 2020 (Tizen 4 and 5) prepares a stream from
+   * its first segment and answers no seek before it plays: a resume point
+   * is sought once it plays (`startAfterPlay`). Later sets seek before
+   * playing.
    */
   readonly hlsFromFirstSegment: boolean;
   private readonly player: Avplay;
@@ -95,7 +96,8 @@ export class AvplayEngine implements PlayerEngine {
   private hold: { target: number; origin: number; until: number } | null = null;
   /**
    * A seek AVPlay said it made, to be checked once it plays (`LAND_CHECK_MS`)
-   * or at `LAND_CAP_MS`: `played` while ready since (`since`: ready now, from then).
+   * or at `LAND_CAP_MS`: `played` while it played since (`since`: playing
+   * now, from then). Paused, it doesn't move, and isn't judged until it plays.
    */
   private landing: { target: number; origin: number; played: number; since: number | null } | null = null;
   /** Bumped by each seek asked for, as it is asked: a seek's outcome once a newer one was asked is moot. */
@@ -138,14 +140,8 @@ export class AvplayEngine implements PlayerEngine {
     if (l) {
       // A seek's landing is judged once it plays, not while the stream waits, and not at all once it ended.
       if (status === "ended" || status === "idle") this.clearLanding();
-      else if (status === "ready") {
-        l.since = Date.now();
-        this.armLandCheck();
-      } else {
-        if (l.since !== null) l.played += Date.now() - l.since;
-        l.since = null;
-        this.clearTimer("landTimer");
-      }
+      else if (status === "ready") this.landingRuns();
+      else this.landingWaits();
     }
     this.listener?.status(status);
   }
@@ -154,13 +150,12 @@ export class AvplayEngine implements PlayerEngine {
   private run(fn: () => void): void {
     if (this.seeking) this.queued.push(fn);
     else {
-      const was = this.seeking;
       try {
         fn();
       } catch {
         // The state allows nothing now; the listener hears what went wrong.
         // A seek that threw waits for nothing: the calls after it go on.
-        if (!was && this.seeking) this.seekDone();
+        if (this.seeking) this.seekDone();
       }
     }
   }
@@ -224,9 +219,31 @@ export class AvplayEngine implements PlayerEngine {
 
   private expectLanding(target: number, origin: number): void {
     this.clearLanding();
-    this.landing = { target, origin, played: 0, since: this.state === "buffering" ? null : Date.now() };
+    this.landing = { target, origin, played: 0, since: null };
+    this.armCap();
+    if (this.state === "ready") this.landingRuns();
+  }
+
+  private armCap(): void {
+    this.clearTimer("capTimer");
     this.capTimer = setTimeout(() => this.checkLanding(true), LAND_CAP_MS);
-    if (this.state !== "buffering") this.armLandCheck();
+  }
+
+  /** It plays (ready, and meant to play): the seek's landing is checked once it played a while. */
+  private landingRuns(): void {
+    const l = this.landing;
+    if (!l || l.since !== null || this.state !== "ready" || !this.wantPlay) return;
+    l.since = Date.now();
+    this.armLandCheck();
+  }
+
+  /** It waits, or is paused: the time it played so far is kept, and the check waits for it to play again. */
+  private landingWaits(): void {
+    const l = this.landing;
+    if (!l) return;
+    if (l.since !== null) l.played += Date.now() - l.since;
+    l.since = null;
+    this.clearTimer("landTimer");
   }
 
   private armLandCheck(): void {
@@ -247,12 +264,20 @@ export class AvplayEngine implements PlayerEngine {
    * on from where it was. A keyframe a little before or after the target,
    * or a stream that keeps waiting, is a seek made. A stream the server makes still waiting at `LAND_CAP_MS` is
    * the server's to make, not a seek failed: AVPlay's time then is still
-   * the one from before it.
+   * the one from before it. A file still waiting then is given up on, but
+   * as slow, not refused: a slow network isn't the kind of file's to
+   * remember. Paused, the check waits until it plays.
    */
   private checkLanding(capped: boolean): void {
     const l = this.landing;
     if (!l || this.state === "ended" || (!capped && this.state === "buffering")) return;
-    if (capped && this.state === "buffering" && this.source?.hls) {
+    if (!this.wantPlay) {
+      // Paused: AVPlay's time says nothing yet. Checked once it plays, the cap again from then.
+      this.clearTimer("capTimer");
+      return;
+    }
+    const slow = capped && this.state === "buffering";
+    if (slow && this.source?.hls) {
       this.clearLanding();
       return;
     }
@@ -269,15 +294,15 @@ export class AvplayEngine implements PlayerEngine {
       if (t > 0) this.lastTime = t;
       return;
     }
-    console.info("[avplay] seek didn't land", l.target, t);
-    this.refused(l.target, t);
+    console.info(slow ? "[avplay] seek still loading" : "[avplay] seek didn't land", l.target, t);
+    this.refused(l.target, t, slow);
   }
 
   /** A seek that didn't get to `target`: the position is where AVPlay is, and the session hears of it. */
-  private refused(target: number, at: number | null): void {
+  private refused(target: number, at: number | null, slow = false): void {
     this.hold = null;
     this.lastTime = at !== null && at >= 0 ? at : this.lastTime;
-    this.listener?.seekFailed?.(target);
+    this.listener?.seekFailed?.(target, slow);
   }
 
   private seekDone(): void {
@@ -422,6 +447,8 @@ export class AvplayEngine implements PlayerEngine {
 
   play(): void {
     this.wantPlay = true;
+    if (this.landing && this.capTimer === null) this.armCap();
+    this.landingRuns();
     this.run(() => {
       const s = this.player.getState();
       if (s === "READY" || s === "PAUSED") this.player.play();
@@ -430,6 +457,7 @@ export class AvplayEngine implements PlayerEngine {
 
   pause(): void {
     this.wantPlay = false;
+    this.landingWaits();
     this.run(() => {
       if (this.player.getState() === "PLAYING") this.player.pause();
     });

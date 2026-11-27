@@ -26,6 +26,9 @@ export const SEEK_LAND_NEAR_MS = 5_000;
 export const SEEK_JUDGED_MS = 30_000;
 export const SEEK_STAYED_MS = 1_000;
 
+/** How long a failed file's address is given to answer (`addressStatus`) before the failure is taken as the file's. */
+const ADDRESS_ASK_MS = 5_000;
+
 /** A picture held across a switch (`holdPicture`) is kept at most this wide: the app's screen is 1920 pixels. */
 const HOLD_MAX_WIDTH = 1920;
 
@@ -403,12 +406,52 @@ export class VideoEngine implements PlayerEngine {
     this.listener?.firstFrame();
   }
 
-  /** The element's error, as the session's recovery reads it. */
+  /**
+   * The element's error, as the session's recovery reads it. The TV says
+   * the same (MEDIA_ERR_SRC_NOT_SUPPORTED) of a file it can't play and of
+   * an address that failed (404, or 410 once the server stopped the
+   * session): a file's address is asked first, and a failed one is the
+   * session's to look into, not the file's fault.
+   */
   protected failed(): void {
     const e = this.video.error;
-    if (!e || !this.source) return;
+    const source = this.source;
+    if (!e || !source) return;
     this.letGo();
-    this.listener?.error(mediaError(e.code, e.message || "", this.source));
+    const error = mediaError(e.code, e.message || "", source);
+    if (e.code !== 4 || source.hls) {
+      this.listener?.error(error);
+      return;
+    }
+    const mine = this.generation;
+    const detail = e.message || "the address failed";
+    void this.addressStatus(source.url).then((status) => {
+      if (mine !== this.generation || this.source !== source) return;
+      if (status === 0) this.listener?.error({ kind: "network", detail });
+      else if (status !== null && status >= 400) this.listener?.error({ kind: "http", status, detail });
+      else this.listener?.error(error);
+    });
+  }
+
+  /**
+   * The status a file's address answers now (`HEAD`), 0 when nothing
+   * answers, `null` when it can't be told in `ADDRESS_ASK_MS`.
+   */
+  protected addressStatus(url: string): Promise<number | null> {
+    if (typeof fetch !== "function") return Promise.resolve(null);
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => resolve(null), ADDRESS_ASK_MS);
+      fetch(url, { method: "HEAD", cache: "no-store" }).then(
+        (r) => {
+          clearTimeout(timer);
+          resolve(r.status);
+        },
+        () => {
+          clearTimeout(timer);
+          resolve(0);
+        },
+      );
+    });
   }
 }
 

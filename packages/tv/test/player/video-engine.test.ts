@@ -277,12 +277,62 @@ describe("a <video> engine", () => {
     expect(heard.filter((h) => h.startsWith("seekFailed"))).toEqual([]);
   });
 
-  it("tells the session of the element's error, as the recovery reads it", () => {
+  it("tells the session of the element's error, as the recovery reads it", async () => {
     const { engine, el, heard } = setup();
     engine.prepare(source(), true);
-    el.fail(4, "MEDIA_ERR_SRC_NOT_SUPPORTED");
+    el.fail(3, "MEDIA_ERR_DECODE");
     expect(heard).toContain("error unsupported");
     engine.release();
+  });
+
+  describe("a file it says it can't play (MEDIA_ERR_SRC_NOT_SUPPORTED)", () => {
+    afterEach(() => vi.unstubAllGlobals());
+    /** The element fails with code 4 as the file's address answers `answer` (a status, or nothing). */
+    async function failsWith(answer: number | "unreachable" | "silent") {
+      const asked: string[] = [];
+      vi.stubGlobal("fetch", (url: string, init: RequestInit) => {
+        asked.push(`${init.method} ${url}`);
+        if (answer === "unreachable") return Promise.reject(new TypeError("Failed to fetch"));
+        if (answer === "silent") return new Promise(() => undefined);
+        return Promise.resolve({ status: answer });
+      });
+      const { engine, el, heard } = setup();
+      engine.prepare(source(), true);
+      el.fail(4, "MEDIA_ERR_SRC_NOT_SUPPORTED");
+      await vi.advanceTimersByTimeAsync(answer === "silent" ? 5_000 : 0);
+      engine.release();
+      return { asked, errors: heard.filter((h) => h.startsWith("error")) };
+    }
+
+    it("asks the file's address, and takes it as the file's fault when the address answers", async () => {
+      const { asked, errors } = await failsWith(206);
+      expect(asked).toEqual(["HEAD http://nas:7539/api/media/pley_mk_KEY/file.mkv"]);
+      expect(errors).toEqual(["error unsupported"]);
+    });
+
+    it("takes a failed address (404, or 410 once the server stopped the session) as the session's to look into", async () => {
+      expect((await failsWith(404)).errors).toEqual(["error http"]);
+      expect((await failsWith(410)).errors).toEqual(["error http"]);
+    });
+
+    it("takes an address nothing answers as the network's", async () => {
+      expect((await failsWith("unreachable")).errors).toEqual(["error network"]);
+    });
+
+    it("takes it as the file's when the address doesn't answer in time", async () => {
+      expect((await failsWith("silent")).errors).toEqual(["error unsupported"]);
+    });
+
+    it("says nothing of it once another source was asked for", async () => {
+      vi.stubGlobal("fetch", () => Promise.resolve({ status: 404 }));
+      const { engine, el, heard } = setup();
+      engine.prepare(source(), true);
+      el.fail(4, "MEDIA_ERR_SRC_NOT_SUPPORTED");
+      engine.prepare(source({ url: "http://nas:7539/api/media/pley_mk_KEY/other.mkv" }), true);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(heard.filter((h) => h.startsWith("error"))).toEqual([]);
+      engine.release();
+    });
   });
 
   it("names itself in the language shown, for Playback info", () => {
